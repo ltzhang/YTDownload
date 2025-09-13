@@ -10,7 +10,7 @@ builder.Services.AddCors(options =>
     options.AddPolicy("AllowExtension",
         policy =>
         {
-            policy.WithOrigins("moz-extension://*", "http://localhost:*")
+            policy.AllowAnyOrigin()
                   .AllowAnyMethod()
                   .AllowAnyHeader();
         });

@@ -120,3 +120,35 @@ h2 {
   margin-top: 5px;
   color: #666;
 }
+
+.debug {
+  font-size: 11px;
+  color: #444;
+  margin: 10px 0;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.5);
+  border-radius: 3px;
+  font-family: monospace;
+  word-break: break-all;
+}
+
+.retry-btn {
+  margin-top: 10px;
+  padding: 10px 20px;
+  background: #007bff;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.retry-btn:hover {
+  background: #0056b3;
+}
+
+.retry-btn:disabled {
+  background: #ccc;
+  cursor: not-allowed;
+}

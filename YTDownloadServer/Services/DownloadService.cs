@@ -4,6 +4,7 @@ using YoutubeExplode.Videos;
 using YoutubeExplode.Videos.Streams;
 using YoutubeExplode.Common;
 using YoutubeExplode.Channels;
+using Gress;
 
 namespace YTDownloadServer.Services;
 
@@ -21,7 +22,7 @@ public class DownloadService
         );
     }
 
-    public async Task<DownloadResult> DownloadVideoAsync(string videoId, string? videoTitle, string quality)
+    public async Task<DownloadResult> DownloadVideoAsync(string videoId, string? videoTitle, string quality, IProgress<Percentage>? progress = null)
     {
         try
         {
@@ -55,7 +56,8 @@ public class DownloadService
                 uniqueFilePath,
                 new DummyVideo(vid, videoTitle ?? "YouTube Video"),
                 downloadOption,
-                includeSubtitles: false
+                includeSubtitles: false,
+                progress: progress
             );
 
             return new DownloadResult

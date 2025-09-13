@@ -4,6 +4,12 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
 builder.Services.AddSingleton<DownloadService>();
+builder.Services.AddSingleton<DownloadQueueService>(provider =>
+{
+    var downloadService = provider.GetRequiredService<DownloadService>();
+    var logger = provider.GetRequiredService<ILogger<DownloadQueueService>>();
+    return new DownloadQueueService(downloadService, logger, maxConcurrentDownloads: 2);
+});
 
 builder.Services.AddCors(options =>
 {
@@ -29,4 +35,4 @@ app.UseCors("AllowExtension");
 
 app.MapControllers();
 
-app.Run("http://localhost:5000");
+app.Run("http://0.0.0.0:5000");

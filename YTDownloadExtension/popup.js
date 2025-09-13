@@ -17,10 +17,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     const startTime = Date.now();
     try {
       if (showDebug) {
-        debugInfoDiv.textContent = `Attempting connection to http://localhost:5000/api/health...`;
+        debugInfoDiv.textContent = `Attempting connection to http://127.0.0.1:5000/api/health...`;
       }
 
-      const response = await fetch('http://localhost:5000/api/health', {
+      const response = await fetch('http://127.0.0.1:5000/api/health', {
         method: 'GET',
         mode: 'cors',
         headers: {

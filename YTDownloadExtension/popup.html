@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <h2>YouTube Downloader</h2>
+    
+    <div id="noVideo" class="message">
+      <p>Navigate to a YouTube video to download</p>
+    </div>
+    
+    <div id="videoInfo" style="display: none;">
+      <div class="video-title" id="videoTitle"></div>
+      
+      <div class="quality-selector">
+        <label>Quality:</label>
+        <select id="qualitySelect">
+          <option value="1080p" selected>1080p MP4</option>
+          <option value="720p">720p MP4</option>
+        </select>
+      </div>
+      
+      <button id="downloadBtn" class="download-btn">
+        Download Video
+      </button>
+      
+      <div id="status" class="status"></div>
+    </div>
+    
+    <div id="serverError" class="error" style="display: none;">
+      <p>Cannot connect to download server</p>
+      <p class="small">Please ensure the server is running on localhost:5000</p>
+    </div>
+  </div>
+  
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,46 @@
+{
+  "manifest_version": 2,
+  "name": "YouTube Downloader",
+  "version": "1.0",
+  "description": "Download YouTube videos with a single click",
+  
+  "icons": {
+    "48": "icons/icon-48.svg",
+    "96": "icons/icon-96.svg"
+  },
+  
+  "permissions": [
+    "activeTab",
+    "tabs",
+    "*://*.youtube.com/*",
+    "http://localhost:5000/*",
+    "notifications"
+  ],
+  
+  "background": {
+    "scripts": ["background.js"],
+    "persistent": false
+  },
+  
+  "content_scripts": [
+    {
+      "matches": ["*://*.youtube.com/*"],
+      "js": ["content.js"]
+    }
+  ],
+  
+  "browser_action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "48": "icons/icon-48.svg",
+      "96": "icons/icon-96.svg"
+    }
+  },
+  
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "ytdownloader@example.com",
+      "strict_min_version": "57.0"
+    }
+  }
+}

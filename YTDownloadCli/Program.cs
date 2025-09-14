@@ -56,6 +56,24 @@ var audioOnlyOption = new Option<bool>(
     getDefaultValue: () => false
 );
 
+var listPartialsOption = new Option<bool>(
+    aliases: new[] { "--list-partials", "-l" },
+    description: "List all partial downloads in the current directory",
+    getDefaultValue: () => false
+);
+
+var retryRateLimitedOption = new Option<bool>(
+    aliases: new[] { "--retry-limited" },
+    description: "Retry all non-rate-limited partial downloads in the current directory",
+    getDefaultValue: () => false
+);
+
+var userAgentOption = new Option<string?>(
+    aliases: new[] { "--user-agent", "-u" },
+    description: "User agent string (chrome, firefox, safari, edge, mobile, or custom string)",
+    getDefaultValue: () => null
+);
+
 var rootCommand = new RootCommand("YouTube downloader CLI tool - works like wget for YouTube videos")
 {
     urlArgument,
@@ -65,7 +83,10 @@ var rootCommand = new RootCommand("YouTube downloader CLI tool - works like wget
     qualityOption,
     retriesOption,
     quietOption,
-    audioOnlyOption
+    audioOnlyOption,
+    listPartialsOption,
+    retryRateLimitedOption,
+    userAgentOption
 };
 
 rootCommand.SetHandler(async (context) =>
@@ -78,6 +99,76 @@ rootCommand.SetHandler(async (context) =>
     var retries = context.ParseResult.GetValueForOption(retriesOption);
     var quiet = context.ParseResult.GetValueForOption(quietOption);
     var audioOnly = context.ParseResult.GetValueForOption(audioOnlyOption);
+    var listPartials = context.ParseResult.GetValueForOption(listPartialsOption);
+    var retryRateLimited = context.ParseResult.GetValueForOption(retryRateLimitedOption);
+    var userAgent = context.ParseResult.GetValueForOption(userAgentOption);
+
+    // Set custom user agent if specified
+    if (!string.IsNullOrEmpty(userAgent))
+    {
+        var selectedAgent = userAgent.ToLower() switch
+        {
+            "chrome" => YoutubeDownloader.Core.Utils.Http.UserAgents.Chrome,
+            "firefox" => YoutubeDownloader.Core.Utils.Http.UserAgents.Firefox,
+            "safari" => YoutubeDownloader.Core.Utils.Http.UserAgents.Safari,
+            "edge" => YoutubeDownloader.Core.Utils.Http.UserAgents.Edge,
+            "mobile" => YoutubeDownloader.Core.Utils.Http.UserAgents.ChromeMobile,
+            _ => userAgent // Use as custom string
+        };
+
+        YoutubeDownloader.Core.Utils.Http.SetUserAgent(selectedAgent);
+
+        if (!quiet)
+            Console.WriteLine($"Using user agent: {(userAgent.Length > 50 ? userAgent.Substring(0, 50) + "..." : userAgent)}");
+    }
+
+    // Handle list-partials command
+    if (listPartials)
+    {
+        var manager = new PartialDownloadManager(outputDir);
+        manager.ListPartialDownloads(quiet);
+        Environment.Exit(0);
+    }
+
+    // Handle retry-limited command
+    if (retryRateLimited)
+    {
+        var manager = new PartialDownloadManager(outputDir);
+        var partials = manager.GetPartialDownloads()
+            .Where(p => !p.IsRateLimited())
+            .ToList();
+
+        if (partials.Count == 0)
+        {
+            Console.WriteLine("No non-rate-limited partial downloads found to retry.");
+            Environment.Exit(0);
+        }
+
+        Console.WriteLine($"Found {partials.Count} partial download(s) ready to resume:");
+        var urls = new List<string>();
+        foreach (var partial in partials)
+        {
+            Console.WriteLine($"  - {partial.VideoTitle} ({partial.GetCompletionPercentage():F1}% complete)");
+            urls.Add($"https://www.youtube.com/watch?v={partial.VideoId}");
+        }
+
+        // Create a temporary file with URLs
+        var tempFile = Path.GetTempFileName();
+        await File.WriteAllLinesAsync(tempFile, urls);
+
+        var retryDownloader = new YtdDownloader(quiet);
+        var retryResult = await retryDownloader.DownloadFromFileAsync(
+            tempFile,
+            outputDir,
+            quality,
+            audioOnly,
+            retries,
+            context.GetCancellationToken()
+        );
+
+        File.Delete(tempFile);
+        Environment.Exit(retryResult ? 0 : 1);
+    }
 
     // Set up Ctrl+C handler for immediate exit
     using var cts = new CancellationTokenSource();
@@ -197,6 +288,8 @@ public class YtdDownloader
 
         int successful = 0;
         int failed = 0;
+        int rateLimited = 0;
+        var rateLimitedUrls = new List<string>();
 
         for (int i = 0; i < validUrls.Count; i++)
         {
@@ -212,6 +305,45 @@ public class YtdDownloader
                 // Generate output path in the specified directory
                 var outputPath = Path.Combine(outputDir, GetFileNameFromUrl(url, audioOnly));
 
+                // Check if this download is already complete or rate-limited
+                var videoId = VideoId.TryParse(url);
+                if (videoId != null)
+                {
+                    var tracker = new DownloadTracker(videoId.Value, outputPath);
+
+                    // Check if file is already complete (file exists without metadata)
+                    if (File.Exists(outputPath) && !File.Exists(tracker.MetadataPath))
+                    {
+                        var fileInfo = new FileInfo(outputPath);
+                        if (fileInfo.Length > 0)
+                        {
+                            successful++;
+                            if (!_quiet)
+                                Console.WriteLine($"✓ Already downloaded (size: {FormatFileSize(fileInfo.Length)})");
+                            continue; // Skip to next URL
+                        }
+                    }
+
+                    // Check for partial download or rate limit
+                    if (File.Exists(tracker.MetadataPath))
+                    {
+                        tracker.LoadMetadata();
+
+                        if (tracker.IsRateLimited())
+                        {
+                            var remaining = tracker.GetRateLimitRemaining();
+                            if (!_quiet)
+                            {
+                                Console.WriteLine($"⚠ Skipping (rate limited, wait {FormatTimeSpan(remaining ?? TimeSpan.Zero)})");
+                            }
+                            rateLimited++;
+                            rateLimitedUrls.Add(url);
+                            continue; // Skip to next URL
+                        }
+                        // Otherwise it's a resumable partial download - will be handled by DownloadWithRetryAsync
+                    }
+                }
+
                 var success = await DownloadWithRetryAsync(
                     url,
                     outputPath,
@@ -225,23 +357,56 @@ public class YtdDownloader
                 {
                     successful++;
                     if (!_quiet)
-                        Console.WriteLine($"✓ Successfully downloaded [{successful}/{i + 1}]");
+                        Console.WriteLine($"✓ Successfully downloaded");
                 }
                 else
                 {
-                    failed++;
-                    if (!_quiet)
-                        Console.WriteLine($"✗ Failed to download [{failed} failed so far]");
+                    // Check if it was rate limited
+                    if (videoId != null)
+                    {
+                        var tracker = new DownloadTracker(videoId.Value, outputPath);
+                        tracker.LoadMetadata();
+                        if (tracker.IsRateLimited())
+                        {
+                            rateLimited++;
+                            rateLimitedUrls.Add(url);
+                            if (!_quiet)
+                                Console.WriteLine($"⚠ Rate limited - will retry later");
+                        }
+                        else
+                        {
+                            failed++;
+                            if (!_quiet)
+                                Console.WriteLine($"✗ Failed to download");
+                        }
+                    }
+                    else
+                    {
+                        failed++;
+                    }
                 }
             }
             catch (Exception ex)
             {
-                failed++;
-                Console.Error.WriteLine($"Error processing URL: {ex.Message}");
+                // Check for rate limit in exception
+                if (ex.Message.Contains("Exceeded request rate limit") ||
+                    ex.Message.Contains("too many requests") ||
+                    ex.Message.Contains("429"))
+                {
+                    rateLimited++;
+                    rateLimitedUrls.Add(url);
+                    if (!_quiet)
+                        Console.WriteLine($"⚠ Rate limited - continuing with next URL");
+                }
+                else
+                {
+                    failed++;
+                    Console.Error.WriteLine($"Error processing URL: {ex.Message}");
+                }
             }
 
             // Add a small delay between downloads to avoid rate limiting
-            if (i < validUrls.Count - 1)
+            if (i < validUrls.Count - 1 && !cancellationToken.IsCancellationRequested)
             {
                 await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
             }
@@ -251,12 +416,28 @@ public class YtdDownloader
         {
             Console.WriteLine(new string('=', 50));
             Console.WriteLine($"Download Summary:");
-            Console.WriteLine($"  Successful: {successful}/{validUrls.Count}");
-            Console.WriteLine($"  Failed: {failed}/{validUrls.Count}");
+            Console.WriteLine($"  ✓ Successful: {successful}/{validUrls.Count}");
+            if (rateLimited > 0)
+            {
+                Console.WriteLine($"  ⚠ Rate limited: {rateLimited}/{validUrls.Count} (will retry later)");
+            }
+            if (failed > 0)
+            {
+                Console.WriteLine($"  ✗ Failed: {failed}/{validUrls.Count}");
+            }
             Console.WriteLine(new string('=', 50));
+
+            if (rateLimitedUrls.Count > 0)
+            {
+                Console.WriteLine($"\nRate-limited URLs saved for later retry:");
+                var rateLimitedFile = Path.ChangeExtension(filePath, ".ratelimited.txt");
+                await File.WriteAllLinesAsync(rateLimitedFile, rateLimitedUrls, cancellationToken);
+                Console.WriteLine($"  {rateLimitedFile}");
+                Console.WriteLine($"  Run again in 1-2 hours with: ytd -f \"{rateLimitedFile}\"");
+            }
         }
 
-        return failed == 0;
+        return failed == 0 && rateLimited == 0;
     }
 
     private string GetFileNameFromUrl(string url, bool audioOnly)
@@ -319,6 +500,28 @@ public class YtdDownloader
             }
             catch (Exception ex)
             {
+                // Check for rate limit error
+                if (ex.Message.Contains("Exceeded request rate limit") ||
+                    ex.Message.Contains("too many requests") ||
+                    ex.Message.Contains("429"))
+                {
+                    if (!_quiet)
+                        Console.Error.WriteLine($"⚠ Rate limited by YouTube. Please wait 1-2 hours before retrying.");
+
+                    // Mark this download as rate limited
+                    if (videoId != null)
+                    {
+                        var finalPath = outputPath ?? $"{videoId.Value.Value}.mp4";
+                        var tempTracker = new DownloadTracker(videoId.Value.Value, finalPath);
+                        tempTracker.LoadMetadata(); // Load existing metadata if any
+                        tempTracker.RateLimitedAt = DateTime.UtcNow;
+                        tempTracker.LastAttemptTime = DateTime.UtcNow;
+                        tempTracker.SaveMetadata();
+                    }
+
+                    return false; // Don't retry on rate limit
+                }
+
                 Console.Error.WriteLine($"Error: {ex.Message}");
 
                 if (attempt == maxRetries)
@@ -358,6 +561,31 @@ public class YtdDownloader
         // Create download tracker
         var tracker = new DownloadTracker(videoId.Value, finalPath);
 
+        // Check if file already exists
+        if (File.Exists(finalPath))
+        {
+            // If metadata exists, it's an incomplete download
+            if (File.Exists(tracker.MetadataPath))
+            {
+                // Will be handled by the resume logic below
+            }
+            else
+            {
+                // No metadata = download was completed successfully
+                var fileInfo = new FileInfo(finalPath);
+                if (fileInfo.Length > 0)
+                {
+                    if (!_quiet)
+                    {
+                        Console.WriteLine($"✓ File already downloaded: {finalPath}");
+                        Console.WriteLine($"  Size: {FormatFileSize(fileInfo.Length)}");
+                        Console.WriteLine("  Skipping download.");
+                    }
+                    return true;
+                }
+            }
+        }
+
         // Get fresh stream info for accurate size
         var container = audioOnly ? Container.Mp3 : Container.Mp4;
         var preference = GetQualityPreference(quality);
@@ -382,10 +610,36 @@ public class YtdDownloader
             estimatedSize += audioStream.Size.Bytes;
 
         tracker.TotalBytes = estimatedSize;
+        tracker.VideoTitle = video.Title;
+        tracker.DownloadUrl = video.Url;
 
         // Check if we can resume
         if (tracker.CanResume())
         {
+            // Check if rate limited
+            if (tracker.IsRateLimited())
+            {
+                var remaining = tracker.GetRateLimitRemaining();
+                if (remaining != null)
+                {
+                    Console.Error.WriteLine($"⚠ This download was rate limited {remaining.Value.TotalMinutes:F0} minutes ago.");
+                    Console.Error.WriteLine($"Please wait {FormatTimeSpan(remaining.Value)} before retrying.");
+
+                    // Try to find another partial download to resume
+                    var manager = new PartialDownloadManager(Path.GetDirectoryName(finalPath) ?? ".");
+                    var alternative = manager.GetPartialDownloads()
+                        .Where(p => p.VideoId != videoId.Value && !p.IsRateLimited())
+                        .FirstOrDefault();
+
+                    if (alternative != null)
+                    {
+                        Console.WriteLine($"\nAlternatively, you can resume: {alternative.VideoTitle}");
+                        Console.WriteLine($"Run: ytd \"{alternative.VideoId}\" -o \"{alternative.VideoPath}\"");
+                    }
+                }
+                return false;
+            }
+
             if (!_quiet)
             {
                 var existingBytes = tracker.DownloadedBytes;
@@ -399,26 +653,10 @@ public class YtdDownloader
                 Console.WriteLine($"Resuming partial download...\n");
             }
         }
-        else if (File.Exists(finalPath))
+        else
         {
-            // Check if file already exists and is complete
-            var existingFile = new FileInfo(finalPath);
-            if (existingFile.Length > 0)
-            {
-                if (!_quiet)
-                {
-                    Console.WriteLine($"File already exists: {finalPath}");
-                    Console.Write("Overwrite? (y/N): ");
-                    var response = Console.ReadLine();
-                    if (response?.ToLower() != "y")
-                    {
-                        Console.WriteLine("Skipping download.");
-                        return true;
-                    }
-                }
-                File.Delete(finalPath);
-                tracker.Cleanup();
-            }
+            // Fresh download - create metadata immediately
+            tracker.SaveMetadata();
         }
 
         // Create cancellation token that triggers on stall
@@ -473,8 +711,9 @@ public class YtdDownloader
             Directory.CreateDirectory(directory);
         }
 
-        // Store download URL and size for resume capability
-        tracker.DownloadUrl = video.Url;
+        // Update tracker with latest attempt time
+        tracker.LastAttemptTime = DateTime.UtcNow;
+        tracker.SaveMetadata();
 
         if (!_quiet)
         {
@@ -652,6 +891,15 @@ public class YtdDownloader
             len = len / 1024;
         }
         return $"{len:0.##} {sizes[order]}";
+    }
+
+    private string FormatTimeSpan(TimeSpan ts)
+    {
+        if (ts.TotalHours >= 1)
+            return $"{(int)ts.TotalHours}h {ts.Minutes}m";
+        if (ts.TotalMinutes >= 1)
+            return $"{(int)ts.TotalMinutes}m {ts.Seconds}s";
+        return $"{ts.Seconds}s";
     }
 }
 

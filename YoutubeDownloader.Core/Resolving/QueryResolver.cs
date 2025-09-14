@@ -1,6 +1,7 @@
 ﻿using System.Collections.Generic;
 using System.Linq;
 using System.Net;
+using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using YoutubeDownloader.Core.Utils;
@@ -12,10 +13,22 @@ using YoutubeExplode.Videos;
 
 namespace YoutubeDownloader.Core.Resolving;
 
-public class QueryResolver(IReadOnlyList<Cookie>? initialCookies = null)
+public class QueryResolver
 {
-    private readonly YoutubeClient _youtube = new(Http.Client, initialCookies ?? []);
-    private readonly bool _isAuthenticated = initialCookies?.Any() == true;
+    private readonly YoutubeClient _youtube;
+    private readonly bool _isAuthenticated;
+
+    public QueryResolver(IReadOnlyList<Cookie>? initialCookies = null)
+    {
+        _youtube = new YoutubeClient(Http.Client, initialCookies ?? []);
+        _isAuthenticated = initialCookies?.Any() == true;
+    }
+
+    public QueryResolver(HttpClient httpClient, IReadOnlyList<Cookie>? initialCookies = null)
+    {
+        _youtube = new YoutubeClient(httpClient, initialCookies ?? []);
+        _isAuthenticated = initialCookies?.Any() == true;
+    }
 
     private async Task<QueryResult?> TryResolvePlaylistAsync(
         string query,

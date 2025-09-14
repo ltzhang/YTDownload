@@ -21,10 +21,14 @@ public class DownloadTracker
 
     public string VideoId { get; }
     public string OutputPath { get; }
+    public string MetadataPath => _metadataPath;
     public long TotalBytes { get; set; }
     public long DownloadedBytes { get; set; }
     public DateTime StartTime { get; }
     public string? DownloadUrl { get; set; }
+    public DateTime? RateLimitedAt { get; set; }
+    public DateTime? LastAttemptTime { get; set; }
+    public string? VideoTitle { get; set; }
 
     public DownloadTracker(string videoId, string outputPath)
     {
@@ -103,6 +107,30 @@ public class DownloadTracker
         return fileInfo.Length > 0 && fileInfo.Length == DownloadedBytes;
     }
 
+    public bool IsRateLimited()
+    {
+        if (RateLimitedAt == null)
+            return false;
+
+        // Consider rate limited for 2 hours
+        var timeSinceLimit = DateTime.UtcNow - RateLimitedAt.Value;
+        return timeSinceLimit.TotalHours < 2;
+    }
+
+    public TimeSpan? GetRateLimitRemaining()
+    {
+        if (RateLimitedAt == null)
+            return null;
+
+        var elapsed = DateTime.UtcNow - RateLimitedAt.Value;
+        var twoHours = TimeSpan.FromHours(2);
+
+        if (elapsed >= twoHours)
+            return null;
+
+        return twoHours - elapsed;
+    }
+
     public void SaveMetadata()
     {
         try
@@ -115,7 +143,10 @@ public class DownloadTracker
                 DownloadedBytes = DownloadedBytes,
                 StartTime = StartTime,
                 LastUpdate = DateTime.UtcNow,
-                DownloadUrl = DownloadUrl
+                DownloadUrl = DownloadUrl,
+                RateLimitedAt = RateLimitedAt,
+                LastAttemptTime = LastAttemptTime,
+                VideoTitle = VideoTitle
             };
 
             var json = JsonSerializer.Serialize(metadata, new JsonSerializerOptions
@@ -145,6 +176,9 @@ public class DownloadTracker
                     TotalBytes = metadata.TotalBytes;
                     DownloadedBytes = metadata.DownloadedBytes;
                     DownloadUrl = metadata.DownloadUrl;
+                    RateLimitedAt = metadata.RateLimitedAt;
+                    LastAttemptTime = metadata.LastAttemptTime;
+                    VideoTitle = metadata.VideoTitle;
                 }
             }
         }
@@ -178,6 +212,9 @@ public class DownloadTracker
         public DateTime StartTime { get; set; }
         public DateTime LastUpdate { get; set; }
         public string? DownloadUrl { get; set; }
+        public DateTime? RateLimitedAt { get; set; }
+        public DateTime? LastAttemptTime { get; set; }
+        public string? VideoTitle { get; set; }
     }
 }
 

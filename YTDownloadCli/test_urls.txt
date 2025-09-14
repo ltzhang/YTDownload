@@ -1,0 +1,7 @@
+# Test URLs for batch download
+# Lines starting with # are ignored
+
+https://www.youtube.com/watch?v=dQw4w9WgXcQ
+https://www.youtube.com/watch?v=9bZkp7q19f0
+
+# Add more URLs below, one per line
